@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Parametric AutoCAD Generator</title>
+    <style>
+        body { font-family: sans-serif; background-color: #f4f6f9; padding: 30px; }
+        .card { max-width: 500px; background: #fff; margin: 0 auto; padding: 25px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+        h2 { margin-top: 0; color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 8px;}
+        .field { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; font-size: 14px;}
+        input, select { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
+        .shape-panel, .triangle-sub-panel { display: none; background: #f9f9f9; padding: 15px; border-left: 4px solid #3498db; margin-top: 10px; }
+        button { width: 100%; background: #2ecc71; color: white; border: none; padding: 12px; font-size: 16px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-top: 15px;}
+        button:hover { background: #27ae60; }
+    </style>
+    <script>
+        // Shows only the selected primitive shape inputs
+        function updateShapeInterface() {
+            var selectedShape = document.getElementById("shape_selector").value;
+            
+            // Hide all container panels initially
+            var panels = document.getElementsByClassName("shape-panel");
+            for (var i = 0; i < panels.length; i++) {
+                panels[i].style.display = "none";
+            }
+            
+            // Un-hide targeted form group parameters
+            if (selectedShape !== "") {
+                document.getElementById(selectedShape + "_container").style.display = "block";
+            }
+            
+            if(selectedShape === "triangle") {
+                updateTriangleInterface();
+            }
+        }
+
+        // Sub-routing layout selector targeted directly for Triangle subtypes
+        function updateTriangleInterface() {
+            var selectedKind = document.getElementById("triangle_kind_selector").value;
+            var subPanels = document.getElementsByClassName("triangle-sub-panel");
+            for (var i = 0; i < subPanels.length; i++) {
+                subPanels[i].style.display = "none";
+            }
+            if (selectedKind !== "") {
+                document.getElementById(selectedKind + "_tri_container").style.display = "block";
+            }
+        }
+
+        // --- Client-side DXF generation & download ---
+        function num(v, def) { return v === null || v === undefined || v === "" ? def : Number(v); }
+
+        function buildDXFEntitiesForShape(form) {
+            var shape = form.shape_type.value;
+            var lines = [];
+
+            function addLwpolyline(points, closed) {
+                lines.push('0');
+                lines.push('LWPOLYLINE');
+                lines.push('8'); lines.push('OUTLINE');
+                lines.push('90'); lines.push(String(points.length));
+                lines.push('70'); lines.push(closed ? '1' : '0');
+                for (var i=0;i<points.length;i++){
+                    lines.push('10'); lines.push(String(points[i][0]));
+                    lines.push('20'); lines.push(String(points[i][1]));
+                }
+            }
+
+            function addCircle(center, radius) {
+                lines.push('0');
+                lines.push('CIRCLE');
+                lines.push('8'); lines.push('OUTLINE');
+                lines.push('10'); lines.push(String(center[0]));
+                lines.push('20'); lines.push(String(center[1]));
+                lines.push('40'); lines.push(String(radius));
+            }
+
+            if (shape === 'square') {
+                var side = num(form.square_side.value, 50);
+                var pts = [[0,0],[side,0],[side,side],[0,side],[0,0]];
+                addLwpolyline(pts, true);
+            } else if (shape === 'rectangle') {
+                var length = num(form.rect_length.value, 80);
+                var width = num(form.rect_width.value, 40);
+                var pts = [[0,0],[length,0],[length,width],[0,width],[0,0]];
+                addLwpolyline(pts, true);
+            } else if (shape === 'circle') {
+                var radius = num(form.circle_radius.value, 30);
+                addCircle([0,0], radius);
+            } else if (shape === 'triangle') {
+                var tri_kind = form.tri_kind.value;
+                if (tri_kind === 'right') {
+                    var base = num(form.right_base.value, 60);
+                    var height = num(form.right_height.value, 40);
+                    var pts = [[0,0],[base,0],[0,height],[0,0]];
+                    addLwpolyline(pts, true);
+                } else if (tri_kind === 'obtuse') {
+                    var side_a = num(form.obtuse_a.value, 70);
+                    var side_b = num(form.obtuse_b.value, 50);
+                    var angle_deg = num(form.obtuse_angle.value, 120);
+                    var angle_rad = angle_deg * Math.PI / 180.0;
+                    var x3 = side_a + (side_b * Math.cos(angle_rad));
+                    var y3 = side_b * Math.sin(angle_rad);
+                    var pts = [[0,0],[side_a,0],[x3,y3],[0,0]];
+                    addLwpolyline(pts, true);
+                } else if (tri_kind === 'acute') {
+                    var base = num(form.acute_base.value, 80);
+                    var angle_a_deg = num(form.acute_angle_a.value, 60);
+                    var angle_b_deg = num(form.acute_angle_b.value, 50);
+                    var rad_a = angle_a_deg * Math.PI / 180.0;
+                    var rad_b = angle_b_deg * Math.PI / 180.0;
+                    var x3 = (base * Math.tan(rad_b)) / (Math.tan(rad_a) + Math.tan(rad_b));
+                    var y3 = x3 * Math.tan(rad_a);
+                    var pts = [[0,0],[base,0],[x3,y3],[0,0]];
+                    addLwpolyline(pts, true);
+                }
+            }
+
+            return lines;
+        }
+
+        function buildDXF(form) {
+            var header = [];
+            header.push('0'); header.push('SECTION'); header.push('2'); header.push('HEADER');
+            header.push('9'); header.push('$ACADVER'); header.push('1'); header.push('AC1021');
+            header.push('0'); header.push('ENDSEC');
+            header.push('0'); header.push('SECTION'); header.push('2'); header.push('TABLES');
+            header.push('0'); header.push('ENDSEC');
+            header.push('0'); header.push('SECTION'); header.push('2'); header.push('BLOCKS');
+            header.push('0'); header.push('ENDSEC');
+            header.push('0'); header.push('SECTION'); header.push('2'); header.push('ENTITIES');
+
+            var entities = buildDXFEntitiesForShape(form);
+
+            var footer = [];
+            footer.push('0'); footer.push('ENDSEC');
+            footer.push('0'); footer.push('EOF');
+
+            // Join all parts with newline ensuring group-code/value pairs on separate lines
+            var parts = header.concat(entities, footer);
+            return parts.join('\n');
+        }
+
+        function downloadDXF(filename, content) {
+            var blob = new Blob([content], { type: 'application/dxf' });
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        // Intercept form submit to generate DXF client-side and trigger download
+        window.addEventListener('load', function() {
+            var form = document.querySelector('form');
+            form.addEventListener('submit', function(e) {
+                e.preventDefault();
+                var shape = form.shape_type.value || 'shape';
+                var dxf = buildDXF(form);
+                downloadDXF(shape + '_shape.dxf', dxf);
+            });
+        });
+    </script>
+</head>
+<body>
+
+<div class="card">
+    <h2>📐 Parametric Shapes to AutoCAD</h2> 
+    <form action="/generate" method="POST">
+        <div class="field">
+            <label for="shape_selector">1. Choose Primary Profile Geometry Type:</label>
+            <select id="shape_selector" name="shape_type" onchange="updateShapeInterface()" required>
+                <option value="">-- Select Profile --</option>
+                <option value="square">Square Primitive</option>
+                <option value="rectangle">Rectangle Boundary</option>
+                <option value="circle">Circular Boundary</option>
+                <option value="triangle">Triangle Geometry</option>
+            </select>
+        </div>
+
+        <div id="square_container" class="shape-panel">
+            <div class="field">
+                <label>Side Length Dimension (mm):</label>
+                <input type="number" name="square_side" value="50" min="1">
+            </div>
+        </div>
+
+        <div id="rectangle_container" class="shape-panel">
+            <div class="field">
+                <label>Length (X-Axis Edge mm):</label>
+                <input type="number" name="rect_length" value="80" min="1">
+            </div>
+            <div class="field">
+                <label>Width (Y-Axis Edge mm):</label>
+                <input type="number" name="rect_width" value="40" min="1">
+            </div>
+        </div>
+
+        <div id="circle_container" class="shape-panel">
+            <div class="field">
+                <label>Radius Reference Dimension (mm):</label>
+                <input type="number" name="circle_radius" value="30" min="1">
+            </div>
+        </div>
+
+        <div id="triangle_container" class="shape-panel">
+            <div class="field">
+                <label for="triangle_kind_selector">Select Type of Triangle Classification:</label>
+                <select id="triangle_kind_selector" name="tri_kind" onchange="updateTriangleInterface()">
+                    <option value="right">Right Angle Triangle Type</option>
+                    <option value="obtuse">Obtuse Angle Triangle Type (>90°)</option>
+                    <option value="acute">Acute Angle Triangle Type (<90°)</option>
+                </select>
+            </div>
+
+            <div id="right_tri_container" class="triangle-sub-panel" style="display: block;">
+                <div class="field">
+                    <label>Base Length Dimension (mm):</label>
+                    <input type="number" name="right_base" value="60" min="1">
+                </div>
+                <div class="field">
+                    <label>Vertical Height Dimension (mm):</label>
+                    <input type="number" name="right_height" value="40" min="1">
+                </div>
+            </div>
+
+            <div id="obtuse_tri_container" class="triangle-sub-panel">
+                <div class="field">
+                    <label>Base Vector Side A (mm):</label>
+                    <input type="number" name="obtuse_a" value="70" min="1">
+                </div>
+                <div class="field">
+                    <label>Adjacent Vector Side B (mm):</label>
+                    <input type="number" name="obtuse_b" value="50" min="1">
+                </div>
+                <div class="field">
+                    <label>Obtuse Intermediate Angle (Degrees):</label>
+                    <input type="number" name="obtuse_angle" value="120" min="91" max="179">
+                </div>
+            </div>
+
+            <div id="acute_tri_container" class="triangle-sub-panel">
+                <div class="field">
+                    <label>Base Span Width (mm):</label>
+                    <input type="number" name="acute_base" value="80" min="1">
+                </div>
+                <div class="field">
+                    <label>Interior Corner Angle alpha (Degrees):</label>
+                    <input type="number" name="acute_angle_a" value="60" min="1" max="89">
+                </div>
+                <div class="field">
+                    <label>Interior Corner Angle beta (Degrees):</label>
+                    <input type="number" name="acute_angle_b" value="50" min="1" max="89">
+                </div>
+            </div>
+        </div>
+
+        <button type="submit">⚙️ Compile parameters to .DXF</button>
+    </form>
+</div>
+
+</body>
+</html>
